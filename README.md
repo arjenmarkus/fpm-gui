@@ -11,6 +11,8 @@ It helps with the following tasks:
  * Build the package
  * Install the package for use in other programs or contexts
 
+![Screenshot of fpm-gui](fpm-gui-screenshot.png)
+
 ## Version
 
 Current version: 0.1, dd. may 2021.
