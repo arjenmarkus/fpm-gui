@@ -4,23 +4,39 @@
 #     I may need to use TWAPI to suppress the spurious windows that the compiler produces:
 #     https://twapi.magicsplat.com/v4.5/process.html#create_process
 #
-#     TODO:
-#     multiple commands in runCommand to update an existing source directory
 #
-#
+
+#if { $::tcl_platform(platform) eq "windows" } {
+#    console show
+#}
+
+set fpmGuiVersion 0.2
 
 # Default settings --
 set startDir    "~/fpm"
 set tomlFile    "~/fpm/fpm-registry/registry.toml"
-set fpmCommand  "~/fpm/fpm.exe"
+if { $::tcl_platform(platform) eq "windows" } {
+    set extension ".exe"
+} else {
+    set extension ""
+}
+set fpmCommand  [file join [file dirname $::argv0] .. fpm$extension]
 set installDir  "~/fpm-packages/lib"
 set checkoutDir "~/fpm-packages/src"
 set registryUrl "https://github.com/fortran-lang/fpm-registry"
 set registryDir "~/fpm"
+set fpmInformation "https://github.com/fortran-lang/fpm"
+set compiler    "gfortran"
+set compilerProfile "release"
 
-if { [file exists "fpm-gui.profile"] } {
-    source fpm-gui.profile
+set profileName fpm-gui.profile
+puts [glob *]
+
+if { [file exists $profileName] } {
+    source $profileName
+    puts "profile loaded"
 }
+
 
 # Note: not entirely robust ...
 foreach var [list startDir tomlFile fpmCommand installDir checkoutDir registryDir] {
@@ -90,40 +106,50 @@ proc runCommand {cmdtype} {
     global fpmCommand
     global selectedPackage
     global packageList
+    global compiler
+    global compilerProfile
 
     set url     [dict get $packageList $selectedPackage]
     set workDir [file tail $url]
 
     if { $::tcl_platform(platform) eq "windows" } {
-        set run [file join [file dirname $::argv0] run.bat]
+        set run [file join [file dirname [file dirname $::argv0]] run.bat]
     } else {
         set run ""
     }
+    .textw.text insert end $run\n
 
     switch -- $cmdtype {
         "retrieve" {
             cd $checkoutDir
             if { ! [file exists $workDir] } {
-                set cmd "git clone $url.git"
+                set cmds [list "git clone $url.git"]
             } else {
-                set cmd "git fetch; git merge --ff-only"
+                cd [file join $checkoutDir $workDir]
+                set cmds [list "git fetch" "git merge --ff-only"]
             }
         }
         "build"    {
             cd [file join $checkoutDir $workDir]
-            set cmd [string map {/ "\\\\"} "$run $fpmCommand build"]
+            set cmds [list [string map {/ "\\\\"} "$run $fpmCommand build --compiler $compiler --profile $compilerProfile"]]
         }
         "install"  {
             cd [file join $checkoutDir $workDir]
-            set cmd [string map {/ "\\\\"} "$run $fpmCommand install --prefix $installDir "]
+            set cmds [list [string map {/ "\\\\"} "$run $fpmCommand install --prefix $installDir "]]
         }
     }
 
     .textw.text insert end "Package: $selectedPackage -- location: $url\n\n" pkg
 
-    set infile [open "|$cmd 2>@1" "r"]
-    fconfigure $infile -buffering line
-    fileevent $infile readable [list getInput $infile]
+    foreach cmd $cmds {
+        .textw.text insert end ">> $cmd -- [pwd]\n"
+        set infile [open "|$cmd 2>@1" "r"]
+        fconfigure $infile -buffering line
+        fileevent $infile readable [list getInput $infile]
+        vwait ::finish
+    }
+    .textw.text insert end "\nDone\n" pkg
+    .textw.text see end
 }
 
 # getInput --
@@ -145,8 +171,7 @@ proc getInput {channel} {
         catch {
             close $channel
             cd $::startDir
-            .textw.text insert end "\nDone\n" pkg
-            .textw.text see end
+            set ::finish 1
         }
     }
 }
@@ -155,16 +180,24 @@ proc getInput {channel} {
 #     Show information on the selected package by opening the web page
 #
 # Arguments:
-#     None
+#     specific               Show specific information or general (fpm project)
 #
 # Note:
 #     For the moment this works on Windows only
-proc showPkgInformation {} {
+proc showPkgInformation {specific} {
     global selectedPackage
     global packageList
+    global fpmInformation
 
     set outfile [open "index.html" w]
-    puts $outfile [string map [list URL [dict get $packageList $selectedPackage]] {
+
+    if { $specific } {
+        set url [dict get $packageList $selectedPackage]
+    } else {
+        set url $fpmInformation
+    }
+
+    puts $outfile [string map [list URL $url] {
 <html>
 <head>
 <title>Package information</title>
@@ -244,7 +277,7 @@ proc mainWindow {packageNames} {
     grid [::ttk::button .buttons.retrieve -text "Retrieve"     -command [list runCommand retrieve]] \
          [::ttk::button .buttons.build    -text "Build"        -command [list runCommand build]]    \
          [::ttk::button .buttons.install  -text "Install"      -command [list runCommand install]] \
-         [::ttk::button .buttons.info     -text "Information"  -command [list showPkgInformation]] -sticky news -padx 3
+         [::ttk::button .buttons.info     -text "Information"  -command [list showPkgInformation 1]] -sticky news -padx 3
     grid .buttons -sticky news
 
     grid [::ttk::label    .empty1           -text ""] -sticky news
@@ -278,6 +311,8 @@ proc mainWindow {packageNames} {
 "Start up complete:
 Checkout directory: $::checkoutDir
 Installation directory: $::installDir\n
+Compiler: $::compiler
+Compiler profile: $::compilerProfile\n
 Number of registered packages: [llength $::packageNames]\n"
 
 }
@@ -290,6 +325,7 @@ Number of registered packages: [llength $::packageNames]\n"
 # TODO: necessary to set it to something else?
 set startDir [file dirname $::argv0]
 source [file join $startDir fpm-prepare.tcl]
+source [file join $startDir fpm-menu.tcl]
 
 set packageList [loadRegistry $tomlFile]
 
@@ -310,7 +346,3 @@ set selectedPackage [lindex $packageList 0]
 #}
 
 mainWindow $packageNames
-
-if { $::tcl_platform(platform) eq "windows" } {
-    console show
-}
